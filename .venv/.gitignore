@@ -1,0 +1,14 @@
+*# Ignore local database
+db.sqlite3
+
+# Ignore media uploads (The big video files)
+media/
+uploads/
+staticfiles/
+
+# Ignore Python environment and cache
+__pycache__/
+*.py[cod]
+venv/
+env/
+.env
