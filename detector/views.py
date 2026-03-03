@@ -11,7 +11,7 @@ from rest_framework import status
 from .models import AnalysisRecord
 from .serializers import AnalysisRecordSerializer
 
-HUGGINGFACE_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN", "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")
+HUGGINGFACE_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN", "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")
 
 # ==========================================
 # 1. TEXT ANALYSIS ENDPOINT
