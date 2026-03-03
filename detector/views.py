@@ -29,7 +29,7 @@ def analyze_text(request):
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
     
     payload = {"inputs": str(text_content)}
-    response = requests.post(API_URL, headers=headers, json=payload)
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=10)
     
     if response.status_code == 200:
         result = response.json()
@@ -55,10 +55,17 @@ def analyze_text(request):
         return Response(serializer.data, status=status.HTTP_200_OK)
         
     else:
-        error_details = response.json() 
+        try:
+            error_details = response.json()
+        except Exception:
+            error_details = {"raw_error": response.text[:1000]}
+
+        print(f"[HF TEXT ERROR] Status: {response.status_code}, Response: {error_details}")
+
         return Response({
             "error": "AI Model is currently sleeping or unavailable.",
-            "huggingface_message": error_details 
+            "status_code": response.status_code,
+            "huggingface_message": error_details
         }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 # ==========================================
@@ -153,9 +160,12 @@ def analyze_video(request):
                 error_details = response.json()
             except Exception:
                 error_details = {"raw_error": response.text[:200]}
+            
+            print(f"[HF API ERROR] Status: {response.status_code}, Response: {error_details}")
                 
             return Response({
                 "error": "Video AI threw an error. Check the details!",
+                "status_code": response.status_code,
                 "details": error_details
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 

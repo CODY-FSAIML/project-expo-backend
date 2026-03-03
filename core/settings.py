@@ -130,14 +130,14 @@ import os
 
 # Allow your React frontend to talk to Django
 CORS_ALLOWED_ORIGINS = [
-      # For when you test locally
-    "https://project-expo-frontennd.vercel.app", # Your deployed frontend
-
+    "http://localhost:3000",
+    "https://project-expo-frontennd.vercel.app",
 ]
+
 # Add this to allow file uploads (CSRF protection)
 CSRF_TRUSTED_ORIGINS = [
-    
-    "https://your-project.vercel.app,"
+    "http://localhost:3000",
+    "https://project-expo-frontennd.vercel.app",
     "https://project-expo-backend-zpcr.onrender.com",
 ]
 
