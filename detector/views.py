@@ -3,6 +3,7 @@ import os
 import requests
 import cv2
 import tempfile
+import time
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -10,7 +11,7 @@ from rest_framework import status
 from .models import AnalysisRecord
 from .serializers import AnalysisRecordSerializer
 
-HUGGINGFACE_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN", "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")
+HUGGINGFACE_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN", "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")
 
 # ==========================================
 # 1. TEXT ANALYSIS ENDPOINT
@@ -27,9 +28,14 @@ def analyze_text(request):
 
     API_URL = "https://router.huggingface.co/hf-inference/models/mrm8488/bert-tiny-finetuned-sms-spam-detection"
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
-    
+
+    if not HUGGINGFACE_API_TOKEN:
+        return Response({"error": "HuggingFace token not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
     payload = {"inputs": str(text_content)}
-    response = requests.post(API_URL, headers=headers, json=payload, timeout=10)
+    response = hf_post_with_retries(API_URL, headers=headers, json=payload)
+    if response is None:
+        return Response({"error": "HuggingFace API unreachable after retries"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     
     if response.status_code == 200:
         result = response.json()
@@ -81,16 +87,27 @@ def analyze_audio(request):
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
     
     try:
-        response = requests.post(API_URL, headers=headers, data=audio_file.read(), timeout=5)
-        if response.status_code == 200:
+        # read bytes and reset pointer so file can still be saved later
+        audio_bytes = audio_file.read()
+        try:
+            audio_file.seek(0)
+        except Exception:
+            pass
+
+        response = hf_post_with_retries(API_URL, headers=headers, data=audio_bytes)
+        if response is not None and response.status_code == 200:
             result = response.json()
-            is_fake = False if "Speech" in result[0]['label'] else True
-            confidence = round(result[0]['score'] * 100, 2)
-            
+            if isinstance(result, list) and len(result) > 0:
+                is_fake = False if "Speech" in result[0].get('label', '') else True
+                confidence = round(result[0].get('score', 0.0) * 100, 2)
+            else:
+                is_fake = True
+                confidence = 0.0
+
             record = AnalysisRecord.objects.create(media_type='AUDIO', is_fake=is_fake, confidence_score=confidence)
             return Response(AnalysisRecordSerializer(record).data)
-    except Exception:
-        pass 
+    except Exception as e:
+        print(f"[HF AUDIO EXC] {e}")
 
     name = audio_file.name.lower()
     is_fake = True if any(x in name for x in ['clone', 'synth', 'ai', 'test']) else False
@@ -139,12 +156,19 @@ def analyze_video(request):
             "Content-Type": "image/jpeg" 
         }
         
-        response = requests.post(API_URL, headers=headers, data=image_bytes)
-        
+        response = hf_post_with_retries(API_URL, headers=headers, data=image_bytes)
+
+        if response is None:
+            return Response({"error": "HuggingFace API unreachable after retries"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
         if response.status_code == 200:
             result = response.json()
-            is_fake = result[0]['label'] == 'fake'
-            confidence = round(result[0]['score'] * 100, 2)
+            is_fake = False
+            confidence = 0.0
+            if isinstance(result, list) and len(result) > 0:
+                top = result[0]
+                is_fake = top.get('label', '') == 'fake'
+                confidence = round(top.get('score', 0.0) * 100, 2)
 
             record = AnalysisRecord.objects.create(
                 media_type='VIDEO',
@@ -160,9 +184,9 @@ def analyze_video(request):
                 error_details = response.json()
             except Exception:
                 error_details = {"raw_error": response.text[:200]}
-            
+
             print(f"[HF API ERROR] Status: {response.status_code}, Response: {error_details}")
-                
+
             return Response({
                 "error": "Video AI threw an error. Check the details!",
                 "status_code": response.status_code,
@@ -172,3 +196,31 @@ def analyze_video(request):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+def hf_post_with_retries(url, headers=None, data=None, json=None, max_retries=3):
+    """Post to HF with basic retries and exponential backoff. Returns requests.Response or None."""
+    backoff = 1.0
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(url, headers=headers, data=data, json=json, timeout=10)
+            # succeed on 200
+            if resp.status_code == 200:
+                return resp
+
+            # retry on server errors or rate limit
+            if resp.status_code >= 500 or resp.status_code == 429:
+                print(f"[HF RETRY] attempt={attempt} status={resp.status_code}")
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+
+            # other non-200: return immediately
+            return resp
+        except requests.RequestException as e:
+            print(f"[HF EXCEPTION] attempt={attempt} err={e}")
+            time.sleep(backoff)
+            backoff *= 2
+            continue
+
+    return None
